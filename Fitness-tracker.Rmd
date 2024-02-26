@@ -1,0 +1,871 @@
+---
+title: "Fitness-Tracker"
+author: "Naftali"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+---
+title: "MINGAR Fitness Wearables"
+author: "Report prepared by Naftali"
+date: "2024-02-24"
+output:
+  html_document:
+    toc: true
+    toc_depth: '2'
+    df_print: paged
+  pdf_document:
+    template: report.tex
+    toc: true
+    toc_depth: 2
+lang: en
+subtitle: Exploring the customer base and device performance of MINGAR's fitness wearables.
+titlepage: true
+titlepage-color: 9cb8c3
+titlepage-text-color: FFFFFF
+titlepage-rule-color: FFFFFF
+titlepage-rule-height: 2
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r load_packages, message = FALSE, echo=FALSE, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(lme4)
+library(rvest)
+library(polite)
+library(lmtest)
+library(kableExtra)
+library(gridExtra)
+library(grid)
+
+# this should suppress all code and messages
+knitr::opts_chunk$set(include=TRUE)
+```
+
+```{r load_data, echo=FALSE, warning=FALSE, message=FALSE}
+# read in the data 
+cust_sleep_complete <- readRDS("C:/Users/hp/Downloads/Fitness Project-2022/data/cust_sleep_complete.Rds")
+
+cust_dev_info <- readRDS("C:/Users/hp/Downloads/Fitness Project-2022/data/cust_dev_info.Rds")
+cust_dev_info <- cust_dev_info %>%
+  mutate(is_new = ifelse(cust_dev_info$line == "Advance" | cust_dev_info$line == "Active", 1, 0))
+```
+
+```{r performance_model, echo=FALSE, warning=FALSE, message=FALSE}
+device_performance_model_fixed <- lm(flags ~ duration*emoji_modifier,
+                                       data=cust_sleep_complete)
+device_performance_model_mixed <- lmer(flags ~ duration*emoji_modifier+(1|age),
+                                       data=cust_sleep_complete)
+```
+
+\newpage
+
+# Executive summary
+
+## Background & Aim
+
+MINGAR is a fitness monitoring wearable device manufacturer. As the
+wearables market grows, the company has introduced a new line of
+lower-cost products called 'Active' and 'Advance' to compete with other
+companies in the space, such as Bitfit. The goal of this study is to
+determine the user demography of MINGAR's new goods in order to assess
+the company's current market position, as well as to see if any of its
+products have performance concerns connected to sleep monitoring for
+users of certain skin colors.
+
+## Key Findings
+
+-Customers who live in lower-income areas and are slightly older in age
+than customers of MINGAR's other lines have been drawn to the new
+affordable product lines "Active" and "Advance."
+
+-The likelihood of a consumer purchasing a gadget from MINGAR's
+inexpensive line over a device from MINGAR's other lines reduces by
+around 96 percent for every
+`r toString(signif(1 / (max(cust_dev_info$income) - min(cust_dev_info$income)), 3))`
+Canadian dollar increase in that customer's median region income (see
+Figure 2).(see Figure 2).
+
+-   The likelihood of a customer selecting a device from MINGAR's cheap
+    line over a device from MINGAR's other lines improves by around 46%
+    for every
+    `r toString(signif(1 / (max(cust_dev_info$age) - min(cust_dev_info$age)), 2))`
+    years of customer age (see Figure 1)
+
+-   Customers who use darker skin tone emoji modifiers have a higher
+    maximum number of flags per sleep session than those who use lighter
+    or default skin tone emoji modifiers (see Figure 3).
+
+-   Users with default, light, medium-light, and medium skin tones saw a
+    24.55 percent increase in the number of flags every additional
+    minute of sleep, compared to users with medium-dark and dark skin
+    tones.
+
+## Limitations
+
+-   Naftali didn't have direct access to client data like income.
+    Instead, consumer income was calculated based on the area's median
+    income via postal code.
+
+-   Because emoji skin tone isn't an exact indicator of a user's race or
+    ethnicity, conclusions about the relationship between device
+    performance and skin tone are questionable.
+
+## Visuals
+
+```{r, echo = FALSE}
+# Draw boxplots describing the distribution of median incomes for customers
+# in both the new and traditional groups
+inc <- cust_dev_info %>%
+  ggplot(aes(x = income)) +
+  geom_boxplot() +
+  facet_wrap(~is_new, 
+             nrow = 2,
+             labeller = labeller(is_new = c("1" = "New Customers", "0" = "Traditional Customers"))) +
+  ggtitle("The Distribution of Median Income \nof the Sampled Customers") +
+  xlab("Median Income (in Canadian dollars)") +
+    labs(caption = "Figure 2: Boxplots displaying incomes of customers who \npurchased MINGAR's new affordable line vs. \ncustomers who purchased MINGAR's other lines \n(i.e. 'Traditional Customers').") +
+  theme_minimal() +
+  coord_fixed(ratio=25000) + 
+  theme(plot.title = element_text(size = 12, hjust = 0.5),
+        plot.caption = element_text(face = "italic", hjust = 0),
+        axis.text.y = element_text(size = 10))
+```
+
+```{r}
+# Draw boxplots describing the distribution of ages for customers
+# in both the new and traditional groups
+age <- cust_dev_info %>%
+  ggplot(aes(x = age)) +
+  geom_boxplot() +
+  facet_wrap(~is_new, 
+             nrow = 2,
+             labeller = labeller(is_new = c("1" = "New Customers", "0" = "Traditional Customers"))) +
+  ggtitle("The Distribution of Age \nof the Sampled Customers") +
+  xlab("Age (in years)") +
+  labs(caption = "Figure 1: Boxplots displaying ages of customers who \npurchased MINGAR's new affordable line \n(i.e. 'New Customers') vs. customers who purchased \nMINGAR's other lines (i.e. 'Traditional Customers').") +
+  theme_minimal() +
+  coord_fixed(ratio=10) + 
+  theme(plot.title = element_text(size = 12, hjust = 0.5),
+        plot.caption = element_text(face = "italic", hjust = 0),
+        axis.text.y = element_text(size = 9))
+```
+
+```{r performance_scatterplot, echo=FALSE, message=FALSE, warning=FALSE}
+sleep <- cust_sleep_complete %>%
+  ggplot() +
+  aes(x=duration, y=flags) +
+  facet_wrap(~emoji_modifier) +
+  geom_point() +
+  xlab("Duration of Sleep (in minutes)") +
+  ylab("Number of flags") +
+  ggtitle("Distribution of sleep quality") +
+  labs(caption = "Figure 3: Scatterplots showing the relationship between duration \nof sleep session and number of flags for each emoji modifier.") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 12, hjust = 0.5),
+        plot.caption = element_text(face = "italic", hjust = 0),
+        axis.text.y = element_text(size = 9)) 
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, fig.height=6}
+# Create layout : nrow = 2, ncol = 2
+pushViewport(viewport(layout = grid.layout(2, 2)))
+# A helper function to define a region on the layout
+define_region <- function(row, col){
+  viewport(layout.pos.row = row, layout.pos.col = col)
+} 
+# Arrange the plots
+print(age, vp = define_region(1, 1))
+print(inc, vp = define_region(1, 2))
+print(sleep, vp=define_region(2, 1:2))
+```
+
+\newpage
+
+# Technical report
+
+## Introduction
+
+With the purpose of providing insights for better product thinking, this
+report delivers consumer and product data on MINGAR's fitness monitoring
+wearable devices. To gain a deeper understanding of the client market
+for MINGAR's two cheap lines ('Active' and 'Advance,') Naftali examines
+the demographic features of new customers drawn so far by these
+products, with a special focus on the intended lower-income customer
+segment. This paper also analyzes the disparity in product performance
+for customers of various races, as well as the underlying concerns that
+this creates. The investigation was undertaken with ethical
+considerations in mind, and the report includes a description of
+Chelsea's ethical code of conduct.
+
+### Research questions
+
+-   What are the demographic differences between customers of the new
+    low-cost product lines ("Active" and "Advance") and users of prior
+    fitness wearable lines? The goal of this question is to see if the
+    low-cost product lines were successful in attracting new clients
+    from the lower-income target market.
+
+-   Are there any unusual differences in the quality of the data
+    collected by MINGAR fitness wearable for customers of different
+    races (particularly those with darker skin tones) and sleep
+    patterns?
+
+## Customers of MINGAR's New Afforable Lines
+
+We used the consensus API to get 2016 median incomes for each census
+subdivision specified by its unique CSDuid - the Canadian census
+subdivision ID - for research question 1. Then, via the University of
+Toronto webpage, we downloaded 2016 Census Canada Postal Code Conversion
+Files, which show the CSDuid for various postcodes. We were able to
+compute median income for each postal code by combining these datasets.
+Then, to estimate our customers' incomes, we combined this newly
+connected dataset with our customer data by postcode. It's worth noting
+that some consumers have multiple postcodes (and hence, are matched with
+more than 1 income). We assigned the mean of the many incomes to such
+customers.In addition, we introduced a new variable called "age" to our
+customer data to indicate the customer's current age. On customer ID, we
+then integrated this customer information data with customer-device
+matchup data. We were able to obtain information on clients as well as
+the unique ID of their device as a result of this, the information on
+each customer's device was then retrieved by merging this dataset with
+our device dataset on the device ID. After that, we chose the relevant
+factors so that our report did not reveal our customer's sensitive
+information.
+
+We generated a new binary variable in the dataset as a last data
+cleaning step that takes the value 1 if a customer is considered "new"
+(i.e., a purchase of our line of "Active" or "Advance" items) and 0
+otherwise. This enabled us to create a model that predicts whether a
+customer belongs to the camp of "new" customers or the camp of
+"traditional" customers based on some information about the customer,
+which helped us answer the question of who our new customers are and how
+they differ from those we consider to be our more "traditional"
+customers.
+
+To begin, we performed some exploratory data analysis on the
+distribution of regional median earnings among the consumers from whom
+we received information:
+
+```{r, echo = FALSE, fig.cap="Box plots displaying incomes of customers who purchased MINGAR's new affordable line (i.e. 'New Customers') vs. customers who purchased MINGAR's other lines (i.e. 'Traditional Customers')."}
+# Create boxplots to depict the distribution of customer median incomes.
+# in both the new and traditional groups
+cust_dev_info %>%
+  ggplot(aes(x = income)) +
+  geom_boxplot() +
+  facet_wrap(~is_new, 
+             nrow = 2,
+             labeller = labeller(is_new = c("1" = "New Customers", "0" = "Traditional Customers"))) +
+  ggtitle("The Distribution of Median Income of the Sampled Customers") +
+  xlab("Median Income (in Canadian dollars)") +
+  theme_minimal()
+```
+
+We can observe from the above boxplots that the distribution of median
+salaries for both traditional and new customers appears to be skewed to
+the right, with a lot of outliers in the right tail, which is to be
+expected given that income distributions bias to the right in most
+circumstances. Another similarity between the two categories of
+consumers is that, as seen by the positioning of the middle bars in the
+box, the median of the median income for both groups is roughly the
+same. However, one noteworthy contrast between the two categories of
+consumers is that the interquartile range of the median income for new
+customers appears to be shorter than that of the established customers.
+The lower interquartile range shows that, while the two sets of
+consumers have identical median incomes, the new customers may have
+slightly less fluctuation in median income. As a result, the variable of
+median income may play a role in distinguishing clients from the new and
+conventional groups.
+
+Then we looked at the age distribution of these customers:
+
+```{r, echo = FALSE, fig.cap="Box plots displaying ages of customers who purchased MINGAR's new affordable line (i.e. 'New Customers') vs. customers who purchased MINGAR's other lines (i.e. 'Traditional Customers')."}
+# Draw boxplots describing the distribution of ages for customers
+# in both the new and traditional groups
+cust_dev_info |>
+  ggplot(aes(x = age)) +
+  geom_boxplot() +
+  facet_wrap(~is_new, 
+             nrow = 2,
+             labeller = labeller(is_new = c("1" = "New Customers", "0" = "Traditional Customers"))) +
+  ggtitle("The Distribution of Age of the Sampled Customers") +
+  xlab("Age (in years)") +
+  theme_minimal()
+```
+
+We can observe from the above boxplots that the distribution of ages is
+roughly skewed to the right for both traditional and new clients.
+Furthermore, as evidenced by the positioning of the middle bars in the
+boxes, the median and spread of ages for both groups are roughly the
+same. The only significant difference between the two distributions is
+that ages considered outliers for traditional customers are not
+considered outliers for new customers, implying that the frequency of
+ages for traditional customers gradually decreases as they get older,
+whereas the frequency of older ages for new customers abruptly
+decreases.This means that most characteristics of the two distributions,
+such as median and skew, are similar, and we should be cautious about
+using age to forecast whether a consumer belongs to the conventional or
+new group.
+
+Finally, we looked at the frequency of the following pronouns among
+these customers:
+
+```{r, echo = FALSE, fig.cap="Bar plots displaying pronouns of customers who purchased MINGAR's new affordable line (i.e. 'New Customers') vs. customers who purchased MINGAR's other lines (i.e. 'Traditional Customers')."}
+# Draw bar plots describing the frequencies of pronouns used by customers
+# in both the new and traditional groups
+cust_dev_info |>
+  ggplot(aes(x = pronouns)) +
+  geom_bar(fill="#FAAA8D") +
+  facet_wrap(~is_new,
+             nrow = 1,
+             labeller = labeller(is_new = c("1" = "New Customers", "0" = "Traditional Customers"))) +
+  ggtitle("The Frequencies of Different Pronouns Among the Sampled Customers") +
+  xlab("Pronouns") +
+  theme_minimal()
+```
+
+We can see from the above bar plots that "she/her" is the most regularly
+used pronoun for both traditional and new clients, followed by "he/him"
+and "they/them." We can also see that the bars in the plot corresponding
+to the new customers are taller than those in the other plot, which is
+to be expected given that the conventional camp has 8476 customers and
+the new camp has 10569. Given how comparable the frequencies of pronouns
+are across both groups, we must be cautious when selecting whether to
+utilize pronouns as a predictor for detecting whether a consumer belongs
+to the conventional or new group.
+
+Before we start building preliminary models, remember that we're trying
+to figure out who buys our "Active" and "Advance" line products and how
+they differ from our traditional customers who buy other lines. We know
+that the color of the emoji customers use has no direct or quantifiable
+(but still significant) impact on whether they belong to the new or
+traditional camp, so we'll include it as a random effect.
+
+Now that we have the tools, we can start working on our basic models. We
+must use a generalized linear mixed model (GLMM) for this data because
+the response is binary and we have a random effect. To begin, we create
+a GLMM with all of the potential predictors we have thus far, such as
+pronouns, median income, and age. After that, we design an auxiliary
+model that excludes pronouns as a predictor and another that excludes
+age as a predictor, because we couldn't tell whether they would be good
+predictors just by looking at the boxplots in the prior exploratory data
+analysis.
+
+It's worth noting that the GLMM models' assumptions are met:
+
+-   Our subjects are independent as they are individual customers.
+
+-   Random effects are normally distributed.
+
+-   All features have constant variance.
+
+```{r, echo = FALSE, include = FALSE}
+# Build models for likelihood ratio tests
+full_mod <- lme4::glmer(is_new ~ pronouns + scales::rescale(age) + scales::rescale(income) + (1 | emoji_modifier), data = cust_dev_info, family = 'binomial')
+no_age <- lme4::glmer(is_new ~ pronouns + scales::rescale(income) + (1 | emoji_modifier), data = cust_dev_info, family = 'binomial')
+no_pronouns <- lme4::glmer(is_new ~ scales::rescale(income) + scales::rescale(age) + (1 | emoji_modifier), data = cust_dev_info, family = 'binomial')
+
+# Conduct likelihood ratio tests
+lmtest::lrtest(no_age, full_mod)
+lmtest::lrtest(no_pronouns, full_mod)
+```
+
+By running likelihood ratio tests between the model containing all the
+predictors so far and the two auxiliary models, we conclude that while a
+model without age as a predictor will NOT explain the data as well as
+the model containing all the predictors (due to the LRT p-value of
+6.426e-09), a model without pronouns as a predictor WILL explain the
+data as well as the model containing all the predictors (due to the LRT
+p-value of 0.1258). Thus, we conclude that pronouns can be discarded as
+a predictor in our final model.
+
+```{r, echo = FALSE, include = FALSE}
+# Build the final model
+finalmod <- lme4::glmer(is_new ~ scales::rescale(age) + scales::rescale(income) + (1 | emoji_modifier), data = cust_dev_info, family = 'binomial')
+```
+
+```{r, echo = FALSE, cache = TRUE, include = FALSE}
+# Extract estimates and confidence intervals from final model
+ests <- format(round(exp(summary(finalmod)$coeff)[,1], 2), nsmall = 2)
+confint <- confint(finalmod)
+cis <- format(round(exp(confint),2)[-1,], nsmall = 2)
+cis_pretty <- str_c("(", trimws(cis[,1]), ", ", cis[,2], ")")
+```
+
+```{r, echo = FALSE}
+# Build and output a table describing the estimates and 
+# confidence intervals from the final model
+my_pretty_table <- cbind(ests, cis_pretty)
+rownames_for_table <- c("Baseline Odds", "Rescaled Age", "Rescaled Median Income")
+colnames_for_table <- c("Estimate", "95% CI")
+rownames(my_pretty_table) <- rownames_for_table
+colnames(my_pretty_table) <- colnames_for_table
+
+my_pretty_table %>%
+  knitr::kable(caption = "Estimates of Odds Ratios and Corresponding 95 Percent Confidence Intervals")
+
+```
+
+To interpret the final model whose estimates and corresponding
+confidence intervals are in Table 1, first note that we were forced to
+rescale age and median income in order to allow R to properly build the
+model. These variables were rescaled with the following formulae:
+
+$$\text{age}_{\text{rescaled}} = \frac{\text{age}_\text{raw} - \min(\text{age})}{\max(\text{age}) - \min(\text{age})}$$
+
+$$\text{income}_{\text{rescaled}} = \frac{\text{income}_\text{raw} - \min(\text{income})}{\max(\text{income}) - \min(\text{income})}$$
+
+where $\text{age}_\text{raw}$ and $\text{income}_\text{raw}$ correspond
+to the original, "raw" age (in years) or median income (in Canadian
+dollars) value that is to be rescaled,
+$\min(\text{age}), \min(\text{income}), \max(\text{age}),$ and
+$\max(\text{income})$ correspond to the minimum and maximum age (in
+years) and median income (in Canadian dollars) values among all
+customers in the dataset, and $\text{age}_{\text{rescaled}}$ and
+$\text{income}_{\text{rescaled}}$ correspond to the resulting rescaled
+age and median income values.
+
+In Table 1, we can first see that the estimate of the baseline odds
+ratio is 1.93, which means that when both rescaled age and rescaled
+median income are 0, the odds of a customer belonging to the new camp is
+1.93 to 1. Since a rescaled age of 0 and a rescaled median income of 0
+correspond to the age of `r toString(signif(min(cust_dev_info$age), 2))`
+years and the median income of `r toString(min(cust_dev_info$income))`
+Canadian dollars respectively, we can say that the odds ratio of a
+customer belonging to the new camp is 1.93 to 1 when that customer is
+`r toString(signif(min(cust_dev_info$age), 2))` years old and lives in a
+region where the median income is
+`r toString(min(cust_dev_info$income))` Canadian dollars.
+
+In the next row of Table 1, we have that the estimate of the odds ratio
+corresponding to the rescaled age is 1.46. This means that for every
+unit increase in rescaled age, the odds of a customer belonging to the
+new camp increase by about 46%. By definition, we have that a unit
+increase in rescaled age corresponds to a
+$\frac{1}{\max(\text{age}) - \min(\text{age})}$ increase in raw,
+unscaled age (in years), so we conclude that for every approximately
+`r toString(signif(1 / (max(cust_dev_info$age) - min(cust_dev_info$age)), 2))`
+year increase in a customer's age (this is approximately
+`r toString(signif(365 / (max(cust_dev_info$age) - min(cust_dev_info$age)), 2))`
+days), the odds of that customer belonging to the new camp increases by
+about 46%.
+
+In the last row of Table 1, we have that the estimate of the odds ratio
+corresponding to the rescaled median income is 0.04, which means that
+for every unit increase in rescaled median income, the odds of a
+customer belonging to the new camp decreases by about 96%. Using the
+same logic as previously, we have that a unit increase in rescaled
+median income corresponds to a
+$\frac{1}{\max(\text{income}) - \min(\text{income})}$ increase in raw,
+unscaled median income (in Canadian dollars), so we conclude that for
+every approximately
+`r toString(signif(1 / (max(cust_dev_info$income) - min(cust_dev_info$income)), 3))`
+Canadian dollar increase in the median income of the region where a
+customer resides, the odds of that customer belonging to the new camp
+decreases by about 96%.
+
+These estimates of the odds ratios corresponding to each of the
+variables in the model tell us that the youngest and lowest income
+customers have almost 2 to 1 odds of buying our newer and more
+affordable Active and Advance line products, and this trend is made even
+more clear by the fact that by even the smallest of increases in median
+income, the odds of a customer purchasing a product from one of these
+lines goes down by a staggering 96%. This allows us to conclude that
+among our lower income customers, our Active and Advance line products
+have indeed been able to attract considerable attention, and that our
+new customers mainly reside in regions of lower median income.
+
+## Device Performance for Customers of Different Races
+
+To answer research question 2, we first gathered device information from
+the Fitness Tracker info
+hub[(link)](https://fitnesstrackerinfohub.netlify.app/), which included
+the device's name, line, retail price, and features. After confirming
+that we had authorization from the website to do so, we scraped all of
+the data. We also included a few potentially useful variables in this
+dataset, such as the retail price category of the item and its age based
+on its release date. We merged the two datasets using the
+client-provided data on the device to derive the device information
+corresponding to each device ID. Because sleep score is our major
+variable of interest, we only selected devices that can track sleep from
+this list. We then combine this dataset with each customer's sleep data
+to match each sleep session to the appropriate device. To preserve
+client privacy, we only picked variables related to the investigation.
+We also eliminated sessions with missing data for sex, pronouns, and/or
+postcode because there weren't enough of them to constitute a meaningful
+trend, and they aren't the predictors we want to focus on for this
+subject. The Unicode for emoji modifiers were also changed to more
+understandable labels.
+
+With the data we had, the only way to determine the data's quality for a
+specific sleep session was to count how many flags were raised
+throughout that session. We were also compelled to employ a dummy
+variable--using emoji-modifiers to estimate each customer's skin
+tone--because we do not directly collect data on race or ethnicity. The
+distribution of sleep session time is depicted in the following graph,
+with varying numbers of flags raised for users using different emoji
+modifiers. From the figure, note that we can see that when we are given
+the emoji-modifier of a customer, the relationship between the duration
+of sleep and the number of flags raised is roughly linear and
+homoscedastic, so we decided to fit a linear mixed model. The reason why
+we avoided generalized additive models is because we seeked to maximize
+interpretability, as we needed to explain our model to our employers.
+
+```{r performance_interaction_or_not, echo=FALSE, eval=FALSE}
+# Model with interaction included
+device_performance_model_1 <- lm(flags ~ duration*emoji_modifier, 
+                                 data=cust_sleep_complete)
+# Model without included
+device_performance_model_2 <- lm(flags ~ duration + emoji_modifier,
+                                 data=cust_sleep_complete)
+
+lmtest::lrtest(device_performance_model_1, device_performance_model_2)
+# Interaction is needed
+```
+
+```{r age-or-sex, echo=FALSE, eval=FALSE}
+# Model with Sex included
+device_performance_model_1 <- lmer(flags ~ duration*emoji_modifier + (1|sex), 
+                                 data=cust_sleep_complete)
+# Model with Age included
+device_performance_model_2 <- lmer(flags ~ duration*emoji_modifier + 
+                                     (1|age), data=cust_sleep_complete)
+# Model with both Age and Sex included
+device_performance_model_3 <- lmer(flags ~ duration*emoji_modifier + (1|sex) + 
+                                     (1|age), data=cust_sleep_complete)
+
+lmtest::lrtest(device_performance_model_1, device_performance_model_3)
+# Evidence that Age is not needed
+
+lmtest::lrtest(device_performance_model_2, device_performance_model_3)
+# Evidence that we do not need sex
+```
+
+```{r bat_life-or-line, echo=FALSE, eval=FALSE}
+# Model with Sex included
+device_performance_model_1 <- lmer(flags ~ duration*emoji_modifier + (1|line), 
+                                 data=cust_sleep_complete)
+# Model with Age included
+device_performance_model_2 <- lmer(flags ~ duration*emoji_modifier + (1|bat_life), 
+                                   data=cust_sleep_complete)
+# Model with both Age and Sex included
+device_performance_model_3 <- lmer(flags ~ duration*emoji_modifier + (1|line) + 
+                                     (1|bat_life), data=cust_sleep_complete)
+
+lmtest::lrtest(device_performance_model_1, device_performance_model_3)
+# Evidence that bat_life is not needed
+
+lmtest::lrtest(device_performance_model_2, device_performance_model_3)
+# Evidence that line is not needed
+```
+
+As we are trying to understand if there are discrepancies between the
+performance of the device (i.e., quality of the data measured) for
+different sleep sessions, our predicted variable was the number of flags
+raised for a given sleep session. We were primarily interested in how
+the skin tone and the sleep quality affected these measurements, so we
+set the emoji-modifiers and the duration of a sleep session as the fixed
+effects. An ANOVA test led us to include the interaction between these
+two variables in our model. This was our baseline model. After
+performing many likelihood ratio tests on models with and without
+various random effects (i.e., the customer's age and gender, as well as
+the line and battery life of the device), we decided to include another
+model with age as a random effect.
+
+```{r performance_boxplot, echo=FALSE, fig.cap="Box-plots that show the distribution of the sleep quality for different number of flags and different emojis used.", fig.height=6.6}
+# create a visualization
+cust_sleep_complete %>%
+  mutate(flags=as.factor(flags)) %>% # Turn number of flags into a factor for boxplots
+  ggplot() + # Plotting everything
+  aes(y=duration, x=flags) +
+  facet_wrap(~emoji_modifier) +
+  geom_boxplot() +
+  ylab("Duration of Sleep (in minutes)") +
+  xlab("Number of flags") +
+  ggtitle("Distribution of sleep quality")+
+  coord_flip()+
+  theme_minimal()
+```
+
+\newpage
+
+There were some very interesting findings from our final models, as well
+as from our boxplot. First, from the boxplot, we can clearly see that
+only customers that use the dark skin tone emoji-modifier have
+experienced a sleep session with more than 22 flags. Similarly, only
+customers with dark skin tone or medium-dark skin tone emoji-modifiers
+have experienced a sleep session with more than 13 flags.
+
+On to our models. The most meaningful thing to look at are the slopes of
+the models, which are shown in the table below. The LM model is the
+linear model with duration and the emoji-modifier (and its interaction)
+while the LMM model is the linear mixed-model with age as another random
+effect.
+
+```{r summary_performance_model, echo=FALSE, eval=FALSE}
+summary(device_performance_model_fixed) # Summary of the fixed model
+summary(device_performance_model_mixed) # Summary of the mixed model (with age)
+```
+
+```{r performance_table, echo=FALSE}
+tibble(`Emoji Modifiers` = # The labels for the coefficients
+         c("Default", 
+           "Light Skin Tone", 
+           "Medium-Light Skin Tone",
+           "Medium Skin Tone", 
+           "Medium-Dark Skin Tone", 
+           "Dark Skin Tone"),
+       `LM Model Increase` = # The coefficients for the linear mixed model
+         c(0.006494,
+           0.003046,
+           0.007467,
+           0.011354,
+           0.022366,
+           0.035384),
+       `LMM Model Increase` = # The coefficients for the linear mixed model
+         c(0.006487,
+           0.003052,
+           0.007457,
+           0.011361,
+           0.022352,
+           0.035391)) %>% # Piping everything into the table
+  knitr::kable(caption = "Average Increase in number of Flags for 1 more minute of sleep")
+```
+
+We can see that moving from a lighter emoji skin tone modifier to a
+darker emoji skin tone modifier increases the average number of flags
+for 1 minute of sleep for both models, strongly suggesting that the
+device performs worse when used by someone with darker skin. This
+indicates that the MINGAR social media team is dealing with a legitimate
+issue.
+
+## Discussion
+
+Using our first research question to examine the customer base of the
+new affordable lines ("Active" and "Advance" products), we find that for
+every
+`r toString(signif(1 / (max(cust_dev_info$income) - min(cust_dev_info$income)), 3))`Canadian
+dollars increase in a customer's median region income, the likelihood of
+that customer purchasing a device from MINGAR's affordable line over a
+device from MINGAR's other lines decreases by roughly 96 percent.
+Furthermore, for every
+`r toString(signif(1 / (max(cust_dev_info$age) - min(cust_dev_info$age)), 2))`
+years that a customer's age increases, the likelihood of that customer
+selecting a device from MINGAR's inexpensive line ('Active' or'Advance')
+over a device from MINGAR's other lines increases by around 46%.
+Customers under the age of
+`r toString(signif(min(cust_dev_info$age), 2))` who live in a location
+with a typical income of `r toString(min(cust_dev_info$income))`have a
+1.93 chance of purchasing a product from MINGAR's inexpensive lines.
+
+As a result, we may deduce that the new inexpensive lines have attracted
+customers who live in lower-income areas and are slightly older in age
+than MINGAR's other lines' customers. As a result, the low-cost lines
+have been successful in attracting new customers from the lower-income
+target market.
+
+Then we looked at the association between emoji skin tone modifier and
+sleep session time, as well as the amount of flags present during that
+session, which could be caused by device error or poor data quality.
+Customers who use dark skin tone modifiers can get up to 22 flags per
+sleep session, but customers who use default or lighter skin tones get
+up to 12 flags. With each extra minute of sleep, the number of flags for
+individuals with dark skin tone emoji modifiers grows by 0.035. Those
+with light skin tones, on the other hand, only notice a 0.0030 rise in
+the number of flags for each additional minute of sleep.
+
+These findings imply that there is a link between the skin tone of emoji
+modifiers and the quality of sleep data obtained by MINGAR's devices,
+notably that customers with darker skin tone emoji modifiers have more
+problems collecting data for longer sleep sessions.
+
+### Strengths and limitations
+
+The interpretability of our models is something that Naftali takes
+pleasure in. The team makes a special effort to work with
+human-understandable models whenever possible. In fact, all of the final
+models in this paper are simple to understand. Understanding the
+decisions that an algorithm makes is crucial because it might assist
+identify inherent prejudice in the system.
+
+Having said that, Naftali encountered a few restrictions during this
+investigation. The team didn't have direct access to client income data
+for the first study question, so they had to create estimates about a
+customer's income based on their postal code. While this generality
+allows for adequate research, the team would require direct consumer
+information to produce a more accurate report on market demographics.
+With that stated, Naftali understands that income is sensitive
+information, and that collecting it may trigger user privacy issues.
+Furthermore, the data on median income utilized in this analysis was
+collected in 2016. As a result, this figure may not accurately reflect
+the customer's current earnings.
+
+One limiting issue for the second research question is the availability
+of missing values for the user's emoji modifier, indicating that they
+utilized the default skin tone. As a result, Naftali is unable to
+establish the race/ethnicity of those users, which adds to the
+uncertainty and limits our ability to draw conclusions regarding the
+association between device flags and user race. Similarly, the skin tone
+of an emoji does not always correlate to the user's true racial
+identity.
+
+To address these constraints, MINGAR could send out an optional customer
+survey in which customers can volunteer to contribute information such
+as race. The use of this data, as well as any other potential ethical
+considerations, must be disclosed by MINGAR. Customers must be able to
+opt out of the survey if they so wish.
+
+\newpage
+
+# Consultant information
+
+## Consultant profiles
+
+**Chloe Nguyen**. Chloe is a third-year Data Science and Computer
+Science student at the University of Toronto. She specializes in data
+science and machine learning. Chloe has experience working in project
+management and software development at Microsoft's Cloud and AI team-
+where she collaborated with internal and external stakeholders to create
+project plans, build prototypes and develop solutions. Chloe is an
+active member of UofT's Computer Science community, having lead various
+student unions and clubs-such as President of Women in Computer Science,
+Treasurer of the Computer Science Student Union and Sponsorship
+Executive of Neurotech.
+
+**Shih-Ting (Cindy) Huang**. Cindy is currently a third-year
+undergraduate studying Data Science at the University of Toronto. With a
+passion for improving user experience through machine learning, she
+actively seeks ways to implement different theoretical concepts in real
+life for business-oriented problems. Her skills in multidisciplinary
+fields, including data science, marketing, and linguistics, have enabled
+her to obtain a holistic perspective on multiple projects and devise
+creative solutions with a user-guided mindset.
+
+**Warren Zhu**. Warren is a professional Data and Computer Scientist
+with over 10 years of experience. He was a former researcher at the
+University of Toronto, specializing in Multi-lingual Natural Language
+Processing. Having great understanding and experience with many
+Mathematical and Statistical concepts, he now serves as a consultant in
+various fields, including (but not limited to) marketing, health care
+and linguistics.
+
+**Xiaotang (Jeffrey) Zhou**. Jeffrey is a third-year undergraduate
+student at the University of Toronto currently pursuing a joint Data
+Science Specialist and Mathematics Major degree. With a passion for the
+manifold applications of data analysis, he has worked on several
+projects that have involved many different fields, including but not
+limited to sports and athletics, genetics, economics, and many others.
+His future goals involve entering the sports industry, where he hopes to
+use his expertise in data analytics to devise new and creative ways to
+help his favourite teams succeed.
+
+## Code of ethical conduct
+
+When compiling and analyzing data, Naftali is committed to following
+ethical guidelines for statistical practice. We vow to keep confidential
+information, such as data on customers and devices private, without our
+clients' permission. Furthermore, we want to draw careful conclusions
+based on the facts and the research topics at hand. We have described
+all of the assumptions we made when building the models, as well as any
+potential limitations to our research, in this report, so that the
+audience is fully informed about the context surrounding our
+conclusions. Finally, we have a social obligation. The purpose of this
+inquiry was not simply to see if products could have harmful biases
+against particular groups, but also to make it simple for the general
+public to comprehend how we came to those conclusions.
+
+\newpage
+
+# References
+
+David Cooley (2022). geojsonsf: GeoJSON to Simple Feature Converter. R
+package version 2.0.2. <https://CRAN.R-project.org/package=geojsonsf>
+
+Dmytro Perepolkin (2019). polite: Be Nice on the Web. R package version
+0.1.1. <https://CRAN.R-project.org/package=polite>
+
+Douglas Bates, Martin Maechler, Ben Bolker, Steve Walker (2015). Fitting
+Linear Mixed-Effects Models Using lme4. Journal of Statistical Software,
+67(1), 1-48. <doi:10.18637/jss.v067.i01>.
+
+von Bergmann, J., Dmitry Shkolnik, and Aaron Jacobs (2021). cancensus: R
+package to access, retrieve, and work with Canadian Census data and
+geography. v0.4.2.
+
+Baptiste Auguie (2017). gridExtra: Miscellaneous Functions for "Grid"
+Graphics. R package version 2.3.
+<https://CRAN.R-project.org/package=gridExtra>
+
+Fitness tracker info hub. (n.d.). Retrieved April 3, 2022, from
+<https://fitnesstrackerinfohub.netlify.app/>.
+
+Hadley Wickham (2021). rvest: Easily Harvest (Scrape) Web Pages. R
+package version 1.0.2. <https://CRAN.R-project.org/package=rvest>
+
+Hadley Wickham and Evan Miller (2021). haven: Import and Export 'SPSS',
+'Stata' and 'SAS' Files. R package version 2.4.3.
+<https://CRAN.R-project.org/package=haven>
+
+Hao Zhu (2021). kableExtra: Construct Complex Table with 'kable' and
+Pipe Syntax. R package version 1.3.4.
+<https://CRAN.R-project.org/package=kableExtra>
+
+Pebesma, E., 2018. Simple Features for R: Standardized Support for
+Spatial Vector Data. The R Journal 10 (1), 439-446,
+<https://doi.org/10.32614/RJ-2018-009>
+
+Postal code conversion file. (2016). Toronto. Retrieved April 3, 2022,
+from
+<https://mdl.library.utoronto.ca/collections/numeric-data/census-canada/postal-code-conversion-file>.
+
+Achim Zeileis, Torsten Hothorn (2002). Diagnostic Checking in Regression
+Relationships. R News 2(3), 7-10. URL
+<https://CRAN.R-project.org/doc/Rnews/>
+
+R Core Team (2021). R: A language and environment for statistical
+computing. R Foundation for Statistical Computing, Vienna, Austria. URL
+<https://www.R-project.org/>.
+
+Wickham et al., (2019). Welcome to the tidyverse. Journal of Open Source
+Software, 4(43), 1686, <https://doi.org/10.21105/joss.01686>
+
+Unicode, Inc. (n.d.). Full Emoji Modifier Sequences, v14.0. Unicode,
+Inc. Retrieved April 4, 2022, from
+<https://unicode.org/emoji/charts/full-emoji-modifiers.html>.
+
+\newpage
+
+# Appendix
+
+## Web scraping industry data on fitness tracker devices
+
+The Fitness tracker info hub was used to scrape data on fitness tracker
+devices. Naftali initially checked the website's scraping permissions,
+noting that we are authorized to scrape with a minimum of 12 seconds
+between requests. We also gave details about our user agent to clarify
+our intentions with the data we gathered. Only the information that was
+strictly necessary was stored from the webpage. Our goal was to avoid
+duplicating the dataset for this study and instead focus on factors that
+were important to it.
+
+## Accessing Census data on median household income
+
+The Canadian census API was used to obtain data on median household
+income. Naftali used CensusMapper to register an account, followed the
+API's retrieval criteria, and cited CensusMapper in our report. This is
+public data that is exposed to the public. The use of this data complies
+with the Open Data Licence rules established by Statistics Canada.
+
+## Accessing postcode conversion files
+
+Census Canada postal code conversion data was obtained through the
+University of Toronto portal. Because Naftali is made up of University
+of Toronto students, they had the necessary credentials to access the
+information. The Chelsea squad has consented to the license agreement by
+downloading the dataset. In this report, the source for this information
+has been credited.

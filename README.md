@@ -1,1 +1,1 @@
-# r-project
+# This is a Project used to determine the customer base and the performance of the MINGAR's fitness wearables.
